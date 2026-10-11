@@ -1,0 +1,55 @@
+name: Build static Android binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Build static arm64 binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          API=29
+          BIN="${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$BIN/aarch64-linux-android${API}-clang"
+          OBJCOPY="$BIN/llvm-objcopy"
+          STRIP="$BIN/llvm-strip"
+          OUT="$GITHUB_WORKSPACE/out"
+          mkdir -p "$OUT/Config"
+
+          echo "== Compiling tools (static) =="
+          for pair in "DualBootKernelPatcher:patcher.c" \
+                      "DualBootPatchRemover:remover.c" \
+                      "HDRTool:HDRTool.c"; do
+            name="${pair%%:*}"; src="${pair##*:}"
+            "$CC" -std=gnu11 -Os -static -Wl,--gc-sections \
+              -o "$OUT/$name" "$src" utils.c
+            "$STRIP" "$OUT/$name"
+            echo "built $name"
+          done
+
+          cp Config/* "$OUT/Config/"
+
+          echo "== Verify =="
+          file "$OUT"/DualBootKernelPatcher "$OUT"/DualBootPatchRemover "$OUT"/HDRTool
+          file "$OUT/DualBootKernelPatcher" | grep -q "statically linked"
+          ls -lR "$OUT"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tools-android-arm64-static
+          path: out/
